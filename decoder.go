@@ -6,46 +6,73 @@ import (
 	"math"
 )
 
+// minWavHeaderSize is the smallest slice that can hold the fixed RIFF/WAVE
+// header fields plus the fmt chunk fields DecodeWav reads.
+const minWavHeaderSize = 36
+
 // Parser type
 type Parser func([]byte) float64
 
-// DecodeWav decode wav file information from bytes
+// DecodeWav decodes wav file information from bytes.
+//
+// A truncated input never panics: when the header or chunks are cut short,
+// every read is clamped to the bytes actually present, so a truncated wav
+// yields a Wav with the data that could be read and an empty Data slice when
+// no data chunk is reachable.
 func DecodeWav(bytes []byte) *Wav {
-	waveFormat := WaveFormat(binary.LittleEndian.Uint16(bytes[20:22]))
+	w := &Wav{}
 
-	numChannels := binary.LittleEndian.Uint16(bytes[22:24])
+	if len(bytes) < minWavHeaderSize {
+		return w
+	}
 
-	sampleRate := binary.LittleEndian.Uint32(bytes[24:28])
-
-	bitsPerSample := binary.LittleEndian.Uint16(bytes[34:36])
+	w.WaveFormat = WaveFormat(binary.LittleEndian.Uint16(bytes[20:22]))
+	w.NumChannels = binary.LittleEndian.Uint16(bytes[22:24])
+	w.SampleRate = binary.LittleEndian.Uint32(bytes[24:28])
+	w.BitsPerSample = binary.LittleEndian.Uint16(bytes[34:36])
 
 	subchunk1Size := binary.LittleEndian.Uint32(bytes[16:20])
 
-	subchunk2Start := 20 + subchunk1Size
+	subchunk2Start := 20 + int(subchunk1Size)
+
+	// Need 8 bytes for the next chunk header (id + size).
+	if subchunk2Start+8 > len(bytes) {
+		return w
+	}
+
 	subchunk2ID := string(bytes[subchunk2Start : subchunk2Start+4])
 	subchunk2Size := binary.LittleEndian.Uint32(bytes[subchunk2Start+4 : subchunk2Start+8])
 
 	dataStart := subchunk2Start + 8
-	dataSize := subchunk2Size
+	dataSize := int(subchunk2Size)
 
 	if subchunk2ID == "fact" {
-		subchunk3Start := subchunk2Start + 8 + subchunk2Size
+		subchunk3Start := subchunk2Start + 8 + int(subchunk2Size)
+
+		if subchunk3Start+8 > len(bytes) {
+			return w
+		}
+
 		subchunk3Size := binary.LittleEndian.Uint32(bytes[subchunk3Start+4 : subchunk3Start+8])
 
 		dataStart = subchunk3Start + 8
-		dataSize = subchunk3Size
+		dataSize = int(subchunk3Size)
 	}
 
-	data := bytes[dataStart : dataStart+dataSize]
-
-	return &Wav{
-		WaveFormat:    waveFormat,
-		NumChannels:   numChannels,
-		SampleRate:    sampleRate,
-		BitsPerSample: bitsPerSample,
-		DataChuckSize: dataSize,
-		Data:          data,
+	// Clamp to the bytes actually present so a truncated data chunk returns
+	// the available samples instead of slicing past the end.
+	if dataStart > len(bytes) {
+		return w
 	}
+
+	if dataStart+dataSize > len(bytes) {
+		dataSize = len(bytes) - dataStart
+	}
+
+	w.DataChuckSize = uint32(dataSize)
+	w.Data = bytes[dataStart : dataStart+dataSize]
+
+	return w
 }
 
 // 0 to 255

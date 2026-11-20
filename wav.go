@@ -46,13 +46,17 @@ func (w *Wav) GetData() (interface{}, error) {
 	return nil, errors.New("failed to sampled data from wav file")
 }
 
+// parseMonoSample turns raw data bytes into mono samples. Bytes that do not
+// form a complete sample (a truncated wav tail) are ignored rather than
+// indexed out of range.
 func parseMonoSample(data []byte, bytePerSample int, parser Parser) *MonoData {
-	end := len(data) / bytePerSample
+	frameCount := len(data) / bytePerSample
 
-	sample := make([]float64, 0)
+	sample := make([]float64, 0, frameCount)
 
-	for i := 0; i < end; i += bytePerSample {
-		s := parser(data[i : i+bytePerSample])
+	for i := 0; i < frameCount; i++ {
+		start := i * bytePerSample
+		s := parser(data[start : start+bytePerSample])
 
 		sample = append(sample, s)
 	}
@@ -62,16 +66,20 @@ func parseMonoSample(data []byte, bytePerSample int, parser Parser) *MonoData {
 	}
 }
 
+// parseStereoSample deinterleaves raw data bytes into left/right samples.
+// Frames missing one channel (a truncated wav tail) are dropped, so both
+// channels always have the same length and stay time-aligned.
 func parseStereoSample(data []byte, bytePerSample int, parser Parser) *StereoData {
-	offset := bytePerSample * 2
-	end := len(data)
+	frameSize := bytePerSample * 2
+	frameCount := len(data) / frameSize
 
-	lSample := make([]float64, 0)
-	rSample := make([]float64, 0)
+	lSample := make([]float64, 0, frameCount)
+	rSample := make([]float64, 0, frameCount)
 
-	for i := 0; i < end; i += offset {
-		l := parser(data[i : i+bytePerSample])
-		r := parser(data[i+bytePerSample : i+offset])
+	for i := 0; i < frameCount; i++ {
+		frameStart := i * frameSize
+		l := parser(data[frameStart : frameStart+bytePerSample])
+		r := parser(data[frameStart+bytePerSample : frameStart+frameSize])
 
 		lSample = append(lSample, l)
 		rSample = append(rSample, r)

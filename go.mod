@@ -1,6 +1,6 @@
 module github.com/cettoana/go-waveform
 
-go 1.12
+go 1.16
 
 require (
 	github.com/rs/zerolog v1.20.0
